@@ -6,10 +6,12 @@ from discord.ext import commands
 import discord
 import yt_dlp as youtube_dl
 import asyncio
+from googleapiclient.discovery import build
 
 # STEP 0: LOAD OUR TOKEN FROM SOMEWHERE SAFE
 load_dotenv()
 TOKEN: Final[str] = 'MTI0OTE3NDMwMzM2MzAzOTI3Nw.GC0aKC.pFPeTKx64CknPeIjzhAQIQBPKAa-1PQK8y0_IE'
+YOUTUBE_API_KEY: Final[str] = 'AIzaSyC8PodPvuUKdHUlabEepE7QEMabNy72_KY'
 
 # Ensure PyNaCl is imported correctly
 try:
@@ -49,7 +51,6 @@ ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 1',
     'options': '-vn'
 }
-
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 class YTDLSource(discord.PCMVolumeTransformer):
@@ -164,6 +165,65 @@ async def play(ctx, url):
     else:
         await play_song(ctx, url)
 
+
+@client.command()
+async def search(ctx, *, search_query):
+    try:
+        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+        request = youtube.search().list(
+            q=search_query,
+            part='snippet',
+            type='video',
+            maxResults=1
+        )
+        response = request.execute()
+        video_url = f"https://www.youtube.com/watch?v={response['items'][0]['id']['videoId']}"
+
+        if ctx.voice_client is None:
+            if ctx.author.voice:
+                await ctx.author.voice.channel.connect()
+            else:
+                await ctx.send("You are not connected to a voice channel.")
+                return
+
+        if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+            if ctx.guild.id not in song_queue:
+                song_queue[ctx.guild.id] = []
+
+            song_queue[ctx.guild.id].insert(0, video_url)
+            ctx.voice_client.stop()  # This will trigger play_next(ctx)
+        else:
+            await play_song(ctx, video_url)
+
+        await ctx.send(f'Now playing: {response["items"][0]["snippet"]["title"]}')
+    except Exception as e:
+        await ctx.send(f"An error occurred while searching: {e}")
+
+
+@client.command()
+async def queue_search(ctx, *, search_query):
+    try:
+        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+        request = youtube.search().list(
+            q=search_query,
+            part='snippet',
+            type='video',
+            maxResults=1
+        )
+        response = request.execute()
+        video_url = f"https://www.youtube.com/watch?v={response['items'][0]['id']['videoId']}"
+
+        if ctx.guild.id not in song_queue:
+            song_queue[ctx.guild.id] = []
+
+        song_queue[ctx.guild.id].append(video_url)
+        await ctx.send(f'Song "{response["items"][0]["snippet"]["title"]}" added to queue. Queue position: {len(song_queue[ctx.guild.id])}')
+
+        if ctx.voice_client and not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
+            await play_next(ctx)
+    except Exception as e:
+        await ctx.send(f"An error occurred while searching: {e}")
+
 @client.command()
 async def queue(ctx, url):
     if ctx.guild.id not in song_queue:
@@ -244,6 +304,8 @@ async def ensure_voice(ctx):
             raise commands.CommandError("Author not connected to a voice channel.")
     elif ctx.voice_client.is_playing():
         ctx.voice_client.stop()
+
+
 
 
 # STEP 5: MAIN ENTRY POINT
