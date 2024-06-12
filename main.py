@@ -46,11 +46,12 @@ ytdl_format_options = {
 }
 
 ffmpeg_options = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 1',
     'options': '-vn'
 }
 
-ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 
+ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
@@ -77,14 +78,20 @@ song_queue: Dict[int, List] = {}
 # Function to play the next song in the queue
 async def play_next(ctx):
     if ctx.guild.id not in song_queue or len(song_queue[ctx.guild.id]) == 0:
-        await ctx.voice_client.disconnect()
         return
 
     url = song_queue[ctx.guild.id].pop(0)
-    player = await YTDLSource.from_url(url, loop=client.loop, stream=True)
-    if ctx.voice_client:  # Check if the bot is still connected
-        ctx.voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-        await ctx.send(f'Now playing: {player.title}')
+    await play_song(ctx, url)
+
+# Function to play a song
+async def play_song(ctx, url):
+    try:
+        player = await YTDLSource.from_url(url, loop=client.loop, stream=True)
+        if ctx.voice_client:  # Check if the bot is still connected
+            ctx.voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+            await ctx.send(f'Now playing: {player.title}')
+    except Exception as e:
+        await ctx.send(f"An error occurred: {e}")
 
 # STEP 2: MESSAGE FUNCTIONALITY
 async def send_message(message: Message, user_message: str) -> None:
@@ -141,9 +148,21 @@ async def leave(ctx):
 
 @client.command()
 async def play(ctx, url):
-    player = await YTDLSource.from_url(url, loop=client.loop, stream=True)
-    ctx.voice_client.play(player, after=lambda e: client.loop.create_task(play_next(ctx)))
-    await ctx.send(f'Now playing: {player.title}')
+    if ctx.voice_client is None:
+        if ctx.author.voice:
+            await ctx.author.voice.channel.connect()
+        else:
+            await ctx.send("You are not connected to a voice channel.")
+            return
+
+    if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+        if ctx.guild.id not in song_queue:
+            song_queue[ctx.guild.id] = []
+
+        song_queue[ctx.guild.id].insert(0, url)
+        ctx.voice_client.stop()  # This will trigger play_next(ctx)
+    else:
+        await play_song(ctx, url)
 
 @client.command()
 async def queue(ctx, url):
@@ -153,7 +172,7 @@ async def queue(ctx, url):
     song_queue[ctx.guild.id].append(url)
     await ctx.send(f'Song added to queue. Queue position: {len(song_queue[ctx.guild.id])}')
 
-    if not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
+    if ctx.voice_client and not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
         await play_next(ctx)
 
 @client.command()
@@ -226,11 +245,10 @@ async def ensure_voice(ctx):
     elif ctx.voice_client.is_playing():
         ctx.voice_client.stop()
 
+
 # STEP 5: MAIN ENTRY POINT
 def main() -> None:
     client.run(TOKEN)
 
 if __name__ == '__main__':
     main()
-
-#
