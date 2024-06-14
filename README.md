@@ -2,16 +2,15 @@ Made by Nicolas Gorodnitchi
 
 Desc: discord bot for playing music off of youtube
 
-Current functionalities: Direct play using youtube links, full stack dt queue functionality, full stop and wipe, search instead of url
+Current functionalities: Direct play using youtube links or search, full stack dt queue functionality, full stop and wipe
 
 # Known bugs: 
-if something is playing and something is queued then when !play is called nothing plays, queue remains but the program is deadlocked and does not quit gracefully
+if something is playing and something is queued then when !play is called the queue is quickly played through with each song staying for about a second until the last song is reached and fully played.
 
 
 # Next steps:
 1. Fix bugs
-2. Swap url play and search
-3. Add soundcloud functionality
+2. Add soundcloud functionality
 
 
 # Dependecies and installation commands:
@@ -42,4 +41,4 @@ sudo apt install ffmpeg
 
 On windows:
 Download the FFmpeg build from FFmpeg's official site.
-Extract the files and add the bin directory to your system's PATH environment variable.
+Extract the files and add the bin directory to your system's PATH environment variable. Adjust code to point to it
