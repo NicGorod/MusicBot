@@ -7,6 +7,7 @@ import discord
 import yt_dlp as youtube_dl
 import asyncio
 from googleapiclient.discovery import build
+import re
 
 # STEP 0: LOAD OUR TOKEN FROM SOMEWHERE SAFE
 load_dotenv()
@@ -76,23 +77,19 @@ class YTDLSource(discord.PCMVolumeTransformer):
 # Queue to store songs
 song_queue: Dict[int, List] = {}
 
-# Function to play the next song in the queue
-async def play_next(ctx):
-    if ctx.guild.id not in song_queue or len(song_queue[ctx.guild.id]) == 0:
-        return
 
-    url = song_queue[ctx.guild.id].pop(0)
-    await play_song(ctx, url)
+# Helper function to check if a string is a URL
+def is_url(string):
+    regex = re.compile(
+        r'^(?:http|ftp)s?://' # http:// or https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|' # domain...
+        r'localhost|' # localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|' # ...or ipv4
+        r'\[?[A-F0-9]*:[A-F0-9:]+\]?)' # ...or ipv6
+        r'(?::\d+)?' # optional port
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    return re.match(regex, string) is not None
 
-# Function to play a song
-async def play_song(ctx, url):
-    try:
-        player = await YTDLSource.from_url(url, loop=client.loop, stream=True)
-        if ctx.voice_client:  # Check if the bot is still connected
-            ctx.voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-            await ctx.send(f'Now playing: {player.title}')
-    except Exception as e:
-        await ctx.send(f"An error occurred: {e}")
 
 # STEP 2: MESSAGE FUNCTIONALITY
 async def send_message(message: Message, user_message: str) -> None:
@@ -147,23 +144,87 @@ async def leave(ctx):
     if ctx.voice_client:
         await ctx.guild.voice_client.disconnect()
 
-@client.command()
-async def play(ctx, url):
-    if ctx.voice_client is None:
-        if ctx.author.voice:
-            await ctx.author.voice.channel.connect()
-        else:
-            await ctx.send("You are not connected to a voice channel.")
-            return
 
-    if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+# Function to play the next song in the queue
+async def play_next(ctx):
+    if ctx.guild.id not in song_queue or len(song_queue[ctx.guild.id]) == 0:
+        return
+
+    url = song_queue[ctx.guild.id].pop(0)
+    await play_song(ctx, url)
+
+async def play_song(ctx, url):
+    try:
+        player = await YTDLSource.from_url(url, loop=client.loop, stream=True)
+        if ctx.voice_client:
+            if ctx.voice_client.is_playing():
+                ctx.voice_client.stop()
+            ctx.voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+            await ctx.send(f'Now playing: {player.title}')
+    except Exception as e:
+        await ctx.send(f"An error occurred: {e}")
+
+@client.command()
+async def play(ctx, *, query):
+    try:
+        if ctx.voice_client is None:
+            if ctx.author.voice:
+                await ctx.author.voice.channel.connect()
+            else:
+                await ctx.send("You are not connected to a voice channel.")
+                return
+
+        if not is_url(query):
+            # Perform a YouTube search
+            youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+            request = youtube.search().list(
+                q=query,
+                part='snippet',
+                type='video',
+                maxResults=1
+            )
+            response = request.execute()
+            query = f"https://www.youtube.com/watch?v={response['items'][0]['id']['videoId']}"
+
         if ctx.guild.id not in song_queue:
             song_queue[ctx.guild.id] = []
 
-        song_queue[ctx.guild.id].insert(0, url)
-        ctx.voice_client.stop()  # This will trigger play_next(ctx)
-    else:
-        await play_song(ctx, url)
+        # Stop the current song and play the new song immediately
+        if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+            ctx.voice_client.stop()
+
+        # Add the new song to the front of the queue
+        song_queue[ctx.guild.id].insert(0, query)
+        await play_next(ctx)
+
+    except Exception as e:
+        await ctx.send(f"An error occurred: {e}")
+
+
+
+@client.command()
+async def next(ctx, *, query):
+    try:
+        if not is_url(query):
+            # Perform a YouTube search
+            youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+            request = youtube.search().list(
+                q=query,
+                part='snippet',
+                type='video',
+                maxResults=1
+            )
+            response = request.execute()
+            query = f"https://www.youtube.com/watch?v={response['items'][0]['id']['videoId']}"
+
+        if ctx.guild.id not in song_queue:
+            song_queue[ctx.guild.id] = []
+
+        song_queue[ctx.guild.id].insert(0, query)
+        await ctx.send(f'Song added to the front of the queue.')
+
+    except Exception as e:
+        await ctx.send(f"An error occurred while adding to the front of the queue: {e}")
 
 
 @client.command()
@@ -195,7 +256,6 @@ async def search(ctx, *, search_query):
         else:
             await play_song(ctx, video_url)
 
-        await ctx.send(f'Now playing: {response["items"][0]["snippet"]["title"]}')
     except Exception as e:
         await ctx.send(f"An error occurred while searching: {e}")
 
@@ -225,15 +285,31 @@ async def queue_search(ctx, *, search_query):
         await ctx.send(f"An error occurred while searching: {e}")
 
 @client.command()
-async def queue(ctx, url):
-    if ctx.guild.id not in song_queue:
-        song_queue[ctx.guild.id] = []
+async def queue(ctx, *, query):
+    try:
+        if not is_url(query):
+            # Perform a YouTube search
+            youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+            request = youtube.search().list(
+                q=query,
+                part='snippet',
+                type='video',
+                maxResults=1
+            )
+            response = request.execute()
+            query = f"https://www.youtube.com/watch?v={response['items'][0]['id']['videoId']}"
 
-    song_queue[ctx.guild.id].append(url)
-    await ctx.send(f'Song added to queue. Queue position: {len(song_queue[ctx.guild.id])}')
+        if ctx.guild.id not in song_queue:
+            song_queue[ctx.guild.id] = []
 
-    if ctx.voice_client and not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
-        await play_next(ctx)
+        song_queue[ctx.guild.id].append(query)
+        await ctx.send(f'Song added to queue. Queue position: {len(song_queue[ctx.guild.id])}')
+
+        if ctx.voice_client and not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
+            await play_next(ctx)
+
+    except Exception as e:
+        await ctx.send(f"An error occurred while adding to the queue: {e}")
 
 @client.command()
 async def pause(ctx):
