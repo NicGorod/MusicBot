@@ -1,17 +1,18 @@
 Made by Nicolas Gorodnitchi
 
-Desc: discord bot for playing music off of youtube
+Desc: Discord bot for playing music off of youtube
 
-Current functionalities: Direct play using youtube links or search, full stack dt queue functionality, full stop and wipe
+Current functionalities: 
+-Direct play using youtube links or search using Google API
+-queue functionality, play next in queue
+-full stop and wipe, pause, resume
+-Can overide something playing and maintain a queue
 
 # Known bugs: 
-if something is playing and something is queued then when !play is called the queue is quickly played through with each song staying for about a second until the last song is reached and fully played.
-
+None at the moment
 
 # Next steps:
-1. Fix bugs
-2. Add soundcloud functionality
-
+1. Add soundcloud functionality if demand found
 
 # Dependecies and installation commands:
 Install discord.py: 
